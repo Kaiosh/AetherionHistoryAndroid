@@ -66,9 +66,24 @@ jobs:
 
           echo "Compatibilidad Java/Kotlin configurada."
 
-      - name: Build debug APK
+      - name: Make Gradle wrapper executable
         working-directory: ${{ steps.project.outputs.dir }}
-        run: gradle assembleDebug
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK (use wrapper, verbose logs)
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: |
+          # Run the project's Gradle wrapper to ensure correct Gradle / plugin versions.
+          # Save full output to build.log and fail the step while still printing the log for GitHub UI.
+          ./gradlew assembleDebug --no-daemon --stacktrace --info > build.log 2>&1 || (cat build.log && exit 1)
+
+      - name: Upload Gradle build log
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: ${{ steps.project.outputs.dir }}/build.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
