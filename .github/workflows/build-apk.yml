@@ -1,3 +1,4 @@
+
 name: Build Aetherion History APK
 
 on:
@@ -24,117 +25,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
 
-      - name: Extract Android project
+      - name: Extract project
+        run: unzip -q AetherionHistoryAndroid.zip -d extracted
+
+      - name: Configure Java and Kotlin
         run: |
-          unzip -q AetherionHistoryAndroid.zip -d extracted
-          echo "Contenido extraído:"
-          find extracted -maxdepth 3 -type f | head -200
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Locate Android project
-        id: project
-        run: |
-          PROJECT_DIR="$(find extracted -type f \( -name settings.gradle.kts -o -name settings.gradle \) -print -quit | xargs -r dirname || true)"
+          p = Path("extracted/AetherionHistoryAndroid/app/build.gradle.kts")
+          if not p.exists():
+              raise SystemExit(f"No se encontró el archivo: {p}")
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::No se encontró settings.gradle(.kts) en el zip extraído."
-            find extracted -maxdepth 5 -type f | head -200
-            exit 1
-          fi
+          s = p.read_text()
 
-          if [ -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "Detected Kotlin DSL app/build.gradle.kts"
-          elif [ -f "$PROJECT_DIR/app/build.gradle" ]; then
-            echo "Detected Groovy DSL app/build.gradle"
-          else
-            echo "::error::No se encontró app/build.gradle(.kts) en el proyecto."
-            find "$PROJECT_DIR" -maxdepth 3 -type f | head -200
-            exit 1
-          fi
+          if "sourceCompatibility = JavaVersion.VERSION_17" not in s:
+              marker = "\n}\n\n\ndependencies"
+              addition = """
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
 
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          """
+              if marker not in s:
+                  raise SystemExit("No se encontró la ubicación esperada en app/build.gradle.kts")
+              s = s.replace(marker, "\n" + addition + marker, 1)
+              p.write_text(s)
 
-      - name: Configure Java and Kotlin targets
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          if [ -f app/build.gradle.kts ]; then
-            cat >> app/build.gradle.kts <<'KOTLIN'
+          print(p.read_text())
+          PY
 
-            tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
-                sourceCompatibility = "17"
-                targetCompatibility = "17"
-            }
-
-            tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-                kotlinOptions {
-                    jvmTarget = "17"
-                }
-            }
-            KOTLIN
-            echo "Compatibilidad Java/Kotlin configurada en app/build.gradle.kts"
-          elif [ -f app/build.gradle ]; then
-            cat >> app/build.gradle <<'GROOVY'
-
-            tasks.withType(JavaCompile).configureEach {
-                sourceCompatibility = '17'
-                targetCompatibility = '17'
-            }
-
-            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-                kotlinOptions {
-                    jvmTarget = '17'
-                }
-            }
-            GROOVY
-            echo "Compatibilidad Java/Kotlin configurada en app/build.gradle"
-          else
-            echo "::error::No se encontró app/build.gradle ni app/build.gradle.kts"
-            exit 1
-          fi
-
-      - name: Ensure Gradle wrapper exists and is executable
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          if [ -f ./gradlew ]; then
-            echo "Using existing gradlew"
-            chmod +x ./gradlew
-          else
-            echo "No gradlew found — generating wrapper using the system gradle"
-            gradle wrapper --gradle-version 8.9 || { echo "gradle wrapper failed"; exit 1; }
-            chmod +x ./gradlew
-          fi
-
-      - name: Show Gradle & Java versions
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          echo "=== java --version ==="
-          java --version || true
-          echo "=== gradle --version ==="
-          gradle --version || true
-          echo "=== ./gradlew --version ==="
-          ./gradlew --version || true
-
-      - name: Build debug APK (wrapper + detailed logs)
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace --info > build.log 2>&1 || (cat build.log && exit 1)
-
-      - name: Upload Gradle build log
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: ${{ steps.project.outputs.dir }}/build.log
-          if-no-files-found: error
-          retention-days: 7
+      - name: Build APK
+        run: gradle -p extracted/AetherionHistoryAndroid assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AetherionHistory-debug-apk
-          path: ${{ steps.project.outputs.dir }}/app/build/outputs/**/*.apk
+          path: extracted/AetherionHistoryAndroid/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
